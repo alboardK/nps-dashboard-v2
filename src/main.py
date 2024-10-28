@@ -1,28 +1,28 @@
+# src/main.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
 from components.nps_overview import render_nps_overview
+from utils.config import config, DEFAULT_CONFIG
 
-# Configuration de la page
-st.set_page_config(
-    page_title="NPS Dashboard V2",
-    page_icon="🏊‍♀️",
-    layout="wide"
-)
-
-# Test de la connexion aux données
 def test_data():
     # Création du DataFrame de base
     end_date = pd.Timestamp.now()
     start_date = end_date - pd.Timedelta(days=90)  # 3 mois de données
     dates = pd.date_range(start=start_date, end=end_date, freq='D')
-    n_samples = len(dates)  # Nombre exact de jours
     
+    # Générer plusieurs réponses par jour (entre 3 et 8 réponses)
+    all_dates = []
+    for date in dates:
+        # Générer un nombre aléatoire de réponses pour ce jour
+        n_responses = np.random.randint(3, 9)
+        all_dates.extend([date] * n_responses)
+    
+    n_samples = len(all_dates)
     np.random.seed(42)
     
     df = pd.DataFrame({
-        'Horodateur': dates,
+        'Horodateur': all_dates,
         'NPS_Score': np.random.choice(
             np.arange(0, 11),
             size=n_samples,
@@ -30,28 +30,34 @@ def test_data():
         )
     })
 
-    # Génération des scores pour chaque métrique
     service_metrics = {
+        # Général
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'ambiance générale": [3, 4, 5],
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la propreté générale": [3, 4, 5],
+
+        # Expériences
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'expérience à la salle de sport": [3, 4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'expérience piscine": [3, 4, 5],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant La qualité des coaching en groupe": [3, 4, 5],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la disponibilité des cours sur le planning": [2, 3, 4],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la disponibilité des équipements sportifs": [3, 4, 5],
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les vestiaires (douches / sauna/ serviettes..)": [2, 3, 4],
+
+        # Personnel
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les coachs": [4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les maitres nageurs": [3, 4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant le personnel d'accueil": [3, 4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant Le commercial": [3, 4, 5],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'ambiance générale": [3, 4, 5],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la propreté générale": [3, 4, 5],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les vestiaires (douches / sauna/ serviettes..)": [2, 3, 4],
-        "Notez de 1 à 5 avec 1 pour \"pas du tout satisfait\" et 5 pour \"Parfaitement satisfait\" concernant votre satisfaction sur les éléments de services suivants : [l'offre restauration]": [3, 4, 5],
-        "Notez de 1 à 5 avec 1 pour \"pas du tout satisfait\" et 5 pour \"Parfaitement satisfait\" concernant votre satisfaction sur les éléments de services suivants : [les fêtes]": [3, 4, 5]
-    }
+
+        # Services
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant La qualité des coaching en groupe": [3, 4, 5],
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la disponibilité des cours sur le planning": [2, 3, 4],
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'offre restauration": [3, 4, 5],  # Changé
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les événements": [3, 4, 5]      # Changé
+        }
 
     for metric, possible_scores in service_metrics.items():
         df[metric] = np.random.choice(
             possible_scores,
-            size=n_samples,  # Utiliser la même taille que dates
+            size=n_samples,
             p=np.ones(len(possible_scores)) / len(possible_scores)
         )
 
@@ -65,14 +71,49 @@ def test_data():
     return df
 
 def main():
-    st.title("🏊‍♀️ NPS Dashboard V2 - Test")
+    st.set_page_config(
+        page_title="NPS Dashboard V2",
+        page_icon="🏊‍♀️",
+        layout="wide"
+    )
+
+    # Tabs pour la navigation
+    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📈 Analyses", "⚙️ Configuration"])
     
-    # Chargement des données
     df = test_data()
+
+    with tab1:
+        render_nps_overview(df)
     
-    # Affichage du composant NPS Overview
-    render_nps_overview(df)
+    with tab2:
+        st.header("Analyses détaillées")
+        # ... (à implémenter)
+    
+    with tab3:
+        st.markdown("### ⚙️ Configuration")
+        with st.expander("Paramètres généraux", expanded=True):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                new_threshold = st.number_input(
+                    "Seuil de représentativité",
+                    min_value=10,
+                    max_value=100,
+                    value=config.get('NPS_THRESHOLD', 35),
+                    help="Nombre minimum de réponses nécessaires pour considérer une période comme représentative"
+                )
+                
+                if new_threshold != config.get('NPS_THRESHOLD'):
+                    config['NPS_THRESHOLD'] = new_threshold
+                    st.success(f"Seuil mis à jour : {new_threshold} réponses")
+
+            with col2:
+                st.markdown("""
+                **À propos du seuil de représentativité**
+                
+                Ce seuil détermine le nombre minimum de réponses nécessaires pour qu'une période soit considérée comme statistiquement significative. 
+                Les périodes n'atteignant pas ce seuil seront affichées en transparence dans les graphiques.
+                """)
 
 if __name__ == "__main__":
     main()
-    

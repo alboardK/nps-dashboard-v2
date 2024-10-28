@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from typing import Dict, Tuple
+from utils.config import get_config
 
 def calculate_nps_metrics(df: pd.DataFrame, period: str = '28D') -> Dict:
     """
@@ -186,6 +187,18 @@ def display_nps_header(metrics: Dict):
             help=f"{int(metrics['total_responses'] * metrics['detractors_pct']/100)} répondants"
         )
 
+# Obtenir des noms plus courts de metrics
+def get_short_name(long_name: str) -> str:
+    """Retourne un nom court pour l'affichage"""
+    if "restauration" in long_name.lower():
+        return "Restauration"
+    if "evenements" in long_name.lower():
+        return "Événements"
+    # Extraire le dernier segment après "concernant"
+    if "concernant" in long_name:
+        return long_name.split("concernant")[-1].strip().strip('.')
+    return long_name
+
 def display_metrics_grid(df: pd.DataFrame, period: str):
     """
     Affiche la grille des métriques avec leurs évolutions
@@ -314,62 +327,166 @@ def display_metrics_grid(df: pd.DataFrame, period: str):
 
 def display_nps_trend(df: pd.DataFrame, period: str):
     """
-    Affiche le graphique d'évolution du NPS
+    Affiche le graphique d'évolution du NPS avec valeurs absolues et pourcentages
     """
-    # Regrouper par semaine de manière plus simple
+    threshold = get_config('NPS_THRESHOLD', 35)
+    
+    # Regrouper par semaine
     df['Week'] = pd.to_datetime(df['Horodateur']).dt.strftime('%Y-%m-%W')
     weekly_data = []
     
-    for week in df['Week'].unique():
+    for week in sorted(df['Week'].unique()):
         week_df = df[df['Week'] == week]
         total = len(week_df)
         
         if total > 0:
-            promoteurs = (week_df['NPS_Category'] == 'Promoteur').mean() * 100
-            passifs = (week_df['NPS_Category'] == 'Passif').mean() * 100
-            detracteurs = (week_df['NPS_Category'] == 'Détracteur').mean() * 100
+            promoteurs_count = len(week_df[week_df['NPS_Category'] == 'Promoteur'])
+            passifs_count = len(week_df[week_df['NPS_Category'] == 'Passif'])
+            detracteurs_count = len(week_df[week_df['NPS_Category'] == 'Détracteur'])
             
-            weekly_data.append({
-                'Week': week,
-                'Catégorie': 'Promoteur',
-                'Pourcentage': promoteurs,
-                'Réponses': total
-            })
-            weekly_data.append({
-                'Week': week,
-                'Catégorie': 'Passif',
-                'Pourcentage': passifs,
-                'Réponses': total
-            })
-            weekly_data.append({
-                'Week': week,
-                'Catégorie': 'Détracteur',
-                'Pourcentage': detracteurs,
-                'Réponses': total
-            })
+            promoteurs_pct = (promoteurs_count / total) * 100
+            passifs_pct = (passifs_count / total) * 100
+            detracteurs_pct = (detracteurs_count / total) * 100
+            
+            nps_score = promoteurs_pct - detracteurs_pct
+            
+            # Convertir la semaine en date lisible
+            week_date = pd.to_datetime(week + '-1', format='%Y-%m-%W-%w')
+            readable_date = week_date.strftime('%d %b')
+            
+            weekly_data.extend([
+                {
+                    'Week': readable_date,
+                    'Catégorie': 'Détracteur',
+                    'Count': detracteurs_count,
+                    'Pourcentage': detracteurs_pct,
+                    'Réponses': total,
+                    'Est_Représentatif': total >= threshold,
+                    'NPS': nps_score,
+                    'Order': 1  # Pour s'assurer que les détracteurs sont en bas
+                },
+                {
+                    'Week': readable_date,
+                    'Catégorie': 'Passif',
+                    'Count': passifs_count,
+                    'Pourcentage': passifs_pct,
+                    'Réponses': total,
+                    'Est_Représentatif': total >= threshold,
+                    'NPS': nps_score,
+                    'Order': 2  # Passifs au milieu
+                },
+                {
+                    'Week': readable_date,
+                    'Catégorie': 'Promoteur',
+                    'Count': promoteurs_count,
+                    'Pourcentage': promoteurs_pct,
+                    'Réponses': total,
+                    'Est_Représentatif': total >= threshold,
+                    'NPS': nps_score,
+                    'Order': 3  # Promoteurs en haut
+                }
+            ])
     
     chart_data = pd.DataFrame(weekly_data)
     
-    # Créer le graphique
-    chart = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X('Week:N', title='Semaine'),
-        y=alt.Y('Pourcentage:Q', stack='normalize', title='Répartition (%)'),
-        color=alt.Color('Catégorie:N', scale=alt.Scale(
-            domain=['Détracteur', 'Passif', 'Promoteur'],
-            range=['#ff4b4b', '#ffd166', '#2ab7ca']
-        )),
+    # Barres empilées avec valeurs absolues
+    bars = alt.Chart(chart_data).mark_bar().encode(
+        x=alt.X('Week:N', 
+                title='Semaine',
+                sort=None),
+        y=alt.Y('Count:Q',  # Utiliser le compte au lieu du pourcentage
+                stack=True,
+                title='Nombre de réponses'),
+        color=alt.Color('Catégorie:N',
+                       scale=alt.Scale(
+                           domain=['Détracteur', 'Passif', 'Promoteur'],
+                           range=['#ff4b4b', '#ffd166', '#2ab7ca']
+                       ),
+                       sort=['Détracteur', 'Passif', 'Promoteur']),  # Ordre de l'empilement
+        order=alt.Order(
+            'Order:Q',
+            sort='ascending'
+        ),
+        opacity=alt.condition(
+            'datum.Est_Représentatif',
+            alt.value(1),
+            alt.value(0.5)
+        ),
         tooltip=[
             alt.Tooltip('Week:N', title='Semaine'),
             alt.Tooltip('Catégorie:N', title='Type'),
+            alt.Tooltip('Count:Q', title='Nombre', format='d'),
             alt.Tooltip('Pourcentage:Q', title='Pourcentage', format='.1f'),
-            alt.Tooltip('Réponses:Q', title='Nombre de réponses')
+            alt.Tooltip('Réponses:Q', title='Total réponses'),
+            alt.Tooltip('NPS:Q', title='Score NPS', format='.1f')
         ]
-    ).properties(
-        height=300,
-        title='Évolution du NPS'
     )
     
-    st.altair_chart(chart, use_container_width=True)
+    # Texte pour le nombre de réponses et pourcentage
+    text = alt.Chart(chart_data).mark_text(
+        align='center',
+        baseline='middle',
+        dy=0,
+        color='white',
+        fontSize=11
+    ).encode(
+        x=alt.X('Week:N'),
+        y=alt.Y('Count:Q', stack='center'),  # Position au centre de chaque segment
+        text=alt.Text(
+            'Count:Q',
+            format='d'
+        ),
+        opacity=alt.condition(
+            'datum.Count > 10',  # N'afficher le texte que si assez d'espace
+            alt.value(1),
+            alt.value(0)
+        )
+    )
+    
+    # Score NPS au-dessus des barres
+    nps_text = alt.Chart(
+    chart_data[chart_data['Catégorie'] == 'Promoteur']
+    ).mark_text(
+    dy=-15,  # Augmenter la distance au-dessus des barres
+    color='white',
+    fontSize=12,
+    baseline='bottom'  # Forcer l'alignement par rapport au bas
+    ).encode(
+    x='Week:N',
+    y=alt.Y('sum(Count):Q', stack='zero'),  # Utiliser la somme des counts pour la position
+    text=alt.Text('NPS:Q', format='.0f'),
+    opacity=alt.condition(
+        'datum.Est_Représentatif',
+        alt.value(1),
+        alt.value(0.5)
+        )
+    )
+    
+    # Légende pour le seuil de représentativité
+    legend = alt.Chart({'values': [{'text': f'* Les barres grisées indiquent moins de {threshold} réponses'}]}).mark_text(
+        dx=150,
+        dy=10,
+        color='gray',
+        fontSize=11
+    ).encode(
+        text='text:N'
+    )
+    
+    # Combiner tous les éléments
+    final_chart = (bars + text + nps_text + legend).properties(
+        height=400,
+        title={
+            'text': 'Évolution du NPS',
+            'anchor': 'start',
+            'fontSize': 16
+        }
+    ).configure_axis(
+        grid=True,
+        gridOpacity=0.1
+    )
+    
+    st.altair_chart(final_chart, use_container_width=True)
+
 
 def render_nps_overview(df: pd.DataFrame):
     """
@@ -412,4 +529,34 @@ def render_nps_overview(df: pd.DataFrame):
     except Exception as e:
         st.error(f"Une erreur s'est produite: {str(e)}")
 
+    # Dans nps_overview.py ou dans un nouveau fichier src/components/config_view.py
+
+def render_config():
+    """
+    Affiche et gère la configuration du dashboard
+    """
+    st.header("⚙️ Configuration")
     
+    with st.expander("Paramètres généraux", expanded=True):
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            new_threshold = st.number_input(
+                "Seuil de représentativité",
+                min_value=10,
+                max_value=100,
+                value=get_config('NPS_THRESHOLD'),
+                help="Nombre minimum de réponses nécessaires pour considérer une période comme représentative"
+            )
+            
+            if new_threshold != get_config('NPS_THRESHOLD'):
+                update_config('NPS_THRESHOLD', new_threshold)
+                st.success(f"Seuil mis à jour : {new_threshold} réponses")
+
+        with col2:
+            st.markdown("""
+            **À propos du seuil de représentativité**
+            
+            Ce seuil détermine le nombre minimum de réponses nécessaires pour qu'une période soit considérée comme statistiquement significative. 
+            Les périodes n'atteignant pas ce seuil seront affichées en transparence dans les graphiques.
+            """)
