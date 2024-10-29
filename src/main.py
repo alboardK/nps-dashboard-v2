@@ -47,12 +47,11 @@ def test_data():
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant le personnel d'accueil": [3, 4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant Le commercial": [3, 4, 5],
 
-        # Services
+        # Services (modification uniquement de ces deux dernières lignes)
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant La qualité des coaching en groupe": [3, 4, 5],
         "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la disponibilité des cours sur le planning": [2, 3, 4],
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant l'offre restauration": [3, 4, 5],  # Changé
-        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les événements": [3, 4, 5]      # Changé
-        }
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant la restauration": [3, 4, 5],
+        "sur une echelle de 1 à 5, 1 etant la pire note et 5 la meilleure, notez votre satisfaction concernant les événements et animations": [3, 4, 5]}
 
     for metric, possible_scores in service_metrics.items():
         df[metric] = np.random.choice(
