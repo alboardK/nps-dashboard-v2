@@ -85,140 +85,136 @@ def display_nps_header(metrics: Dict):
             f"{metrics['detractors_pct']}%",
             help=f"{int(metrics['total_responses'] * metrics['detractors_pct']/100)} répondants"
         )
+def prepare_data_for_period(df: pd.DataFrame, period: str):
+    """
+    Prépare et agrège les données selon la période sélectionnée
+    """
+    # Copie pour éviter les modifications sur le DataFrame original
+    df = df.copy()
+    
+    # Conversion des dates
+    df['Date'] = pd.to_datetime(df['Horodateur'])
+    
+    # Définition de la période d'agrégation
+    if period in ['28D', '56D']:  # 4 ou 8 semaines
+        # Grouper par semaine
+        df['Period_Start'] = df['Date'].dt.to_period('W').dt.start_time
+        format_str = '%d %b'
+    else:  # 4 ou 12 mois
+        # Grouper par mois
+        df['Period_Start'] = df['Date'].dt.to_period('M').dt.start_time
+        format_str = '%b %Y'
+    
+    # Créer l'agrégation
+    grouped = df.groupby('Period_Start').agg(
+        total=('NPS_Category', 'count'),
+        promoteurs=('NPS_Category', lambda x: sum(x == 'Promoteur')),
+        passifs=('NPS_Category', lambda x: sum(x == 'Passif')),
+        detracteurs=('NPS_Category', lambda x: sum(x == 'Détracteur'))
+    ).reset_index()
+    
+    # Calculer les métriques
+    grouped['Display_Date'] = grouped['Period_Start'].dt.strftime(format_str)
+    grouped['Sort_Key'] = grouped['Period_Start'].dt.strftime('%Y-%m-%d')
+    grouped['NPS_Score'] = (grouped['promoteurs']/grouped['total'] * 100) - (grouped['detracteurs']/grouped['total'] * 100)
+    grouped['Est_Representatif'] = grouped['total'] >= get_config('NPS_THRESHOLD', 35)
+    
+    # Trier chronologiquement
+    return grouped.sort_values('Period_Start')
+
 def display_nps_trend(df: pd.DataFrame, period: str):
     """
-
-    Affiche le graphique d'évolution du NPS avec valeurs absolues et pourcentages
+    Affiche le graphique d'évolution du NPS avec les données pré-agrégées
     """
-    threshold = get_config('NPS_THRESHOLD', 35)
+    # Filtrer et agréger les données
+    end_date = pd.Timestamp.now()
+    start_date = end_date - pd.Timedelta(period)
+    period_df = df[df['Horodateur'].between(start_date, end_date)]
     
-    # Regrouper par semaine
-    df['Week'] = pd.to_datetime(df['Horodateur']).dt.strftime('%Y-%m-%W')
-    weekly_data = []
-    
-    for week in sorted(df['Week'].unique()):
-        week_df = df[df['Week'] == week]
-        total = len(week_df)
+    if len(period_df) == 0:
+        st.warning("Aucune donnée disponible pour la période sélectionnée.")
+        return
         
-        if total > 0:
-            promoteurs_count = len(week_df[week_df['NPS_Category'] == 'Promoteur'])
-            passifs_count = len(week_df[week_df['NPS_Category'] == 'Passif'])
-            detracteurs_count = len(week_df[week_df['NPS_Category'] == 'Détracteur'])
-            
-            promoteurs_pct = (promoteurs_count / total) * 100
-            passifs_pct = (passifs_count / total) * 100
-            detracteurs_pct = (detracteurs_count / total) * 100
-            
-            nps_score = promoteurs_pct - detracteurs_pct
-            
-            # Convertir la semaine en date lisible
-            week_date = pd.to_datetime(week + '-1', format='%Y-%m-%W-%w')
-            readable_date = week_date.strftime('%d %b')
-            
-            weekly_data.extend([
-                {
-                    'Week': readable_date,
-                    'Catégorie': 'Détracteur',
-                    'Count': detracteurs_count,
-                    'Pourcentage': detracteurs_pct,
-                    'Réponses': total,
-                    'Est_Représentatif': total >= threshold,
-                    'NPS': nps_score,
-                    'Order': 1  # Pour s'assurer que les détracteurs sont en bas
-                },
-                {
-                    'Week': readable_date,
-                    'Catégorie': 'Passif',
-                    'Count': passifs_count,
-                    'Pourcentage': passifs_pct,
-                    'Réponses': total,
-                    'Est_Représentatif': total >= threshold,
-                    'NPS': nps_score,
-                    'Order': 2  # Passifs au milieu
-                },
-                {
-                    'Week': readable_date,
-                    'Catégorie': 'Promoteur',
-                    'Count': promoteurs_count,
-                    'Pourcentage': promoteurs_pct,
-                    'Réponses': total,
-                    'Est_Représentatif': total >= threshold,
-                    'NPS': nps_score,
-                    'Order': 3  # Promoteurs en haut
-                }
-            ])
+    # Préparer les données agrégées
+    agg_data = prepare_data_for_period(period_df, period)
     
-    chart_data = pd.DataFrame(weekly_data)
+    # Créer les données pour le graphique
+    chart_data = []
+    for _, row in agg_data.iterrows():
+        # Ajouter les trois catégories pour chaque période
+        for cat, count in [
+            ('Détracteur', row['detracteurs']),
+            ('Passif', row['passifs']),
+            ('Promoteur', row['promoteurs'])
+        ]:
+            chart_data.append({
+                'Period': row['Display_Date'],
+                'Sort_Key': row['Sort_Key'],
+                'Catégorie': cat,
+                'Count': count,
+                'Total': row['total'],
+                'Est_Représentatif': row['Est_Representatif'],
+                'NPS': round(row['NPS_Score'], 1)
+            })
     
-    # Barres empilées avec valeurs absolues
-    bars = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X('Week:N', 
-                title='Semaine',
-                sort=None),
-        y=alt.Y('Count:Q',  
+    # Convertir en DataFrame pour Altair
+    chart_df = pd.DataFrame(chart_data)
+    
+    # Barres empilées
+    bars = alt.Chart(chart_df).mark_bar().encode(
+        x=alt.X('Period:N',
+                sort=alt.SortField('Sort_Key', order='ascending'),
+                title=None),
+        y=alt.Y('Count:Q',
                 stack=True,
                 title='Nombre de réponses'),
         color=alt.Color('Catégorie:N',
                        scale=alt.Scale(
                            domain=['Détracteur', 'Passif', 'Promoteur'],
                            range=['#ff4b4b', '#ffd166', '#2ab7ca']
-                       ),
-                       sort=['Détracteur', 'Passif', 'Promoteur']),
-        order=alt.Order(
-            'Order:Q',
-            sort='ascending'
-        ),
+                       )),
         opacity=alt.condition(
             'datum.Est_Représentatif',
             alt.value(1),
             alt.value(0.5)
         ),
         tooltip=[
-            alt.Tooltip('Week:N', title='Semaine'),
-            alt.Tooltip('Réponses:Q', title='Total réponses'),
-            alt.Tooltip('Catégorie:N', title='Type'),
-            alt.Tooltip('Pourcentage:Q', title='% ' + alt.datum.Catégorie, format='.1f'),
-            alt.Tooltip('NPS:Q', title='Score NPS', format='.0f')
+            alt.Tooltip('Period:N', title='Période'),
+            alt.Tooltip('Total:Q', title='Total réponses'),
+            alt.Tooltip('Count:Q', title='Nombre de réponses'),
+            alt.Tooltip('NPS:Q', title='Score NPS', format='.1f')
         ]
-    )
+    ).properties(height=300)
     
-    # Score NPS au-dessus des barres
-    nps_text = alt.Chart(
-        chart_data[chart_data['Catégorie'] == 'Promoteur']
-    ).mark_text(
-        dy=-25,  # Distance au-dessus des barres
-        color='white',
-        fontSize=16,  # Plus grand
-        fontWeight='bold',  # En gras
+    # Score NPS sous les barres
+    text = alt.Chart(chart_df[chart_df['Catégorie'] == 'Promoteur']).mark_text(
         align='center',
-        baseline='bottom'
+        baseline='top',
+        dy=5,
+        fontSize=11,
+        color='white'
     ).encode(
-        x='Week:N',
-        y=alt.Y(
-            'sum(Count):Q',
-            stack=True
-        ),
-        text=alt.Text('NPS:Q', format='.0f'),
+        x=alt.X('Period:N',
+                sort=alt.SortField('Sort_Key', order='ascending')),
+        text=alt.Text('NPS:Q', format='.1f'),
         opacity=alt.condition(
             'datum.Est_Représentatif',
             alt.value(1),
             alt.value(0.5)
         )
     )
-
-    # Légende pour le seuil de représentativité
+    
+    # Légende du seuil
+    threshold = get_config('NPS_THRESHOLD', 35)
     legend = alt.Chart({'values': [{'text': f'* Les barres grisées indiquent moins de {threshold} réponses'}]}).mark_text(
         dx=150,
-        dy=10,
+        dy=30,
         color='gray',
         fontSize=11
-    ).encode(
-        text='text:N'
-    )
+    ).encode(text='text:N')
     
-    # Combiner tous les éléments
-    final_chart = (bars + nps_text + legend).properties(
-        height=400,
+    # Graphique final
+    final_chart = (bars + text + legend).properties(
         title={
             'text': 'Évolution du NPS',
             'anchor': 'start',
